@@ -121,3 +121,10 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+.idea
+.DS_Store
+results/
+resources/
+nohup.out
+*.pkl
