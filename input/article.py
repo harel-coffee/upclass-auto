@@ -1,15 +1,15 @@
 #!/usr/bin/env python
 from __future__ import print_function
 
-import json
+import re
 import socket
+import json
 
 import nltk
-import re
 from bs4 import BeautifulSoup
 from lxml import etree
 
-timeout = 120
+timeout=120
 socket.setdefaulttimeout(timeout)
 
 abbreviation = ['a', 'å', 'Ǻ', 'Å', 'b', 'c', 'd', 'e', 'ɛ', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
@@ -18,13 +18,11 @@ abbreviation = ['a', 'å', 'Ǻ', 'Å', 'b', 'c', 'd', 'e', 'ɛ', 'f', 'g', 'h', 
                 'fig', 'figs', 'h', 'i.e', 'it', 'inc', 'min', 'ml', 'mm', 'mol', 'ms', 'no', 'nt',
                 'ref', 'r.p.m', 'sci', 's.d', 'sd', 'sec', 's.e.m', 'sp', 'ssp', 'st', 'supp', 'vs', 'wt']
 
-ANNOTATION = '/data/user/teodoro/uniprot/annotation'
-
 
 def load_pmc_pmid_map():
     # ../annotation/pmc_pmid_map.tsv
     pmc_pmid_map = {}
-    with open(ANNOTATION + '/pmc_pmid_map.tsv', encoding='utf-8') as goa_f:
+    with open('/data/user/teodoro/uniprot/annotation/pmc_pmid_map.tsv', encoding='utf-8') as goa_f:
         for line_no, line in enumerate(goa_f):
             # PMCID_w PMID_wo
             ids = line.strip().split(' ', 1)
@@ -75,11 +73,11 @@ def parse_biomed(filename):
                     pmid = mj['result'][i]['MedlineCitation']['PMID']
 
                     if 'ArticleTitle' in mj['result'][i]['MedlineCitation']:
-                        pre_text[pmid + '_TITLE'] = mj['result'][i]['MedlineCitation']['ArticleTitle']
+                        pre_text[pmid+'_TITLE'] = mj['result'][i]['MedlineCitation']['ArticleTitle']
                     if 'Abstract' in mj['result'][i]['MedlineCitation']:
-                        pre_text[pmid + '_ABSTRACT'] = mj['result'][i]['MedlineCitation']['Abstract']
+                        pre_text[pmid+'_ABSTRACT'] = mj['result'][i]['MedlineCitation']['Abstract']
                 except Exception as e:
-                    print('error processing record ' + str(e))
+                    print('error processing record '+ str(e))
 
         f.close()
     except Exception as e:
@@ -115,10 +113,7 @@ def parse_pubmed(file):
 
     return pre_text
 
-
 phtml = re.compile('[\s\t]+')
-
-
 def get_text_from_html(element):
     text = BeautifulSoup(etree.tostring(element), 'lxml').get_text(separator=u' ')
     return phtml.sub(' ', text.replace('\n', ' ').replace('\r', ''))
@@ -285,14 +280,15 @@ sent_detector._params.abbrev_types.update(abbreviation)
 #    sent_detector._params.abbrev_types.update(abbreviation)
 
 
-def extract_tokens(plain_dict, sent_extract=True):
+def extract_tokens(plain_dict, sent_extract=True, clean_sent=True):
     pre_text = {}
     # clean
     for section_type, section_text in plain_dict.items():
         sents = None
         if sent_extract:
             sents = sent_detector.tokenize(section_text.strip())
-            sents = [clear_sentence(sent) for sent in sents]
+            if clean_sent:
+                sents = [clear_sentence(sent) for sent in sents]
         else:
             sents = section_text.strip() + ' '
         if section_type in pre_text:
@@ -384,9 +380,10 @@ def match_sentence(sentence, info):
             if v != '_NUMBER_' and len(v) > 2:
                 tgex = r'\b' + re.escape(v) + r'\b'
                 sentence = re.sub(tgex, ' _INGEN_ ', sentence)
-    for v in sorted(info['accession'], key=len, reverse=True):
-        if v != '_NUMBER_' and len(v) > 2:
-            tgex = r'\b' + re.escape(v) + r'\b'
-            sentence = re.sub(tgex, ' _INACC_ ', sentence)
+    if 'accession' in info:
+        for v in sorted(info['accession'], key=len, reverse=True):
+            if v != '_NUMBER_' and len(v) > 2:
+                tgex = r'\b' + re.escape(v) + r'\b'
+                sentence = re.sub(tgex, ' _INACC_ ', sentence)
 
     return sentence

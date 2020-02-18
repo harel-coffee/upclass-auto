@@ -1,9 +1,9 @@
+import os
 import pickle
+from random import shuffle
 
 import numpy as np
-import os
 from imblearn.under_sampling import RandomUnderSampler, TomekLinks
-from random import shuffle
 from sklearn.preprocessing import MultiLabelBinarizer
 
 

@@ -1,34 +1,37 @@
 from __future__ import print_function
 
-import numpy as np
 import time
-from copy import deepcopy
+
+import numpy as np
 from keras import backend as K
 from keras import optimizers
 from keras import regularizers
-from keras.callbacks import EarlyStopping, ModelCheckpoint
+from keras.callbacks import EarlyStopping, ModelCheckpoint, TensorBoard
 from keras.layers import Dropout, BatchNormalization
 from keras.layers import Embedding, Input, Conv1D, MaxPooling1D, GlobalMaxPooling1D, Dense
 from keras.layers import GlobalAveragePooling1D
 from keras.layers.merge import concatenate
 from keras.models import Model
-from keras.models import clone_model
 from keras.models import load_model, save_model
 from keras.preprocessing.sequence import pad_sequences
 from keras.utils import plot_model
 from numpy import zeros
 
-from upclass.uniprot.input.regressors import get_label_set
+
+from input.regressors import get_label_set
+
+from copy import deepcopy
+from keras.models import clone_model
 
 if K.backend() == 'tensorflow':
     import tensorflow as tf
-
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
     K.set_session(tf.Session(config=config))
 
 K.set_image_data_format('channels_last')
 K.set_image_dim_ordering('th')
+
 
 np.random.seed(0)
 
@@ -161,6 +164,9 @@ class CNN1D(object):
     def __init__(self, w2v_model, nclasses, max_doc_length, filters=128, kernel_size=5,
                  l2_lambda=0.0001, drop_out=0.5, num_epochs=50, batch_size=96, is_tag=True, limit=None):
         # Model Hyperparameters
+
+        K.clear_session()
+
         self.nclasses = nclasses
         self.max_doc_length = max_doc_length
 
@@ -184,6 +190,7 @@ class CNN1D(object):
         self.vocab_size = None
         self.embedding_dim = None
         self.word_index = None
+
         #        print(time.strftime('%c'), 'loading category map')
         #        self.category_map = get_class_map()
         embedding_matrix = self.init_model_features(w2v_model)
@@ -244,11 +251,11 @@ class CNN1D(object):
         print('total parameters:', self.model.count_params())
         plot_model(self.model, to_file='model.png')
 
-    def fit(self, x_train, y_train):
+    def fit(self, x_train, y_train, validation=None):
         print('model fitting - convolutional neural network')
 
         print('loading train features')
-        x_train, train_docs, _, _ = get_features(x_train, self.word_index, y_train,
+        x_train, train_docs, _, _ = get_features(x_train, self.word_index,
                                                  max_length=self.max_doc_length, tag=self.is_tag,
                                                  limit=self.limit)
         print('loading train labels')
@@ -265,10 +272,10 @@ class CNN1D(object):
 
         early_stopping = EarlyStopping(monitor='val_acc', patience=5, mode='max')
 
-        nn_weights = self.name + '_{}_.best.hdf5'.format(time.time())
-        checkpoint = ModelCheckpoint(nn_weights, save_weights_only=True, monitor='val_acc', verbose=2,
-                                     save_best_only=True,
-                                     mode='max')
+        #nn_weights = self.name + '_{}_.best.hdf5'.format(time.time())
+        #checkpoint = ModelCheckpoint(nn_weights, save_weights_only=True, monitor='val_acc', verbose=2,
+        #                             save_best_only=True,
+        #                             mode='max')
 
         # tensor_board = TensorBoard(log_dir='/data/user/teodoro/tensorboard/graph_{}'.format(time.time()),
         #                            histogram_freq=2,
@@ -280,13 +287,27 @@ class CNN1D(object):
 
         # fit the model
         print(time.strftime('%c'), 'training NN model')
-        history = self.model.fit(x_train, y_train, validation_split=0.01,
-                                 batch_size=96, shuffle=True,
-                                 callbacks=[early_stopping, checkpoint], epochs=50, verbose=2)
+        if validation is not None:
+            print('loading dev features')
+            x_dev = validation[0]
+            y_dev = validation[1]
+            x_dev, dev_docs, _, _ = get_features(x_dev, self.word_index,
+                                                     max_length=self.max_doc_length, tag=self.is_tag,
+                                                     limit=self.limit)
+            print('loading dev labels')
+            dev_docs, y_dev = get_label_set(dev_docs, [], [], y_dev)
+
+            y_dev = np.asarray(y_dev)
+
+            validation = (x_dev, y_dev)
+        history = self.model.fit(x_train, y_train, validation_split=0.05,
+                                    validation_data=validation,
+                                    batch_size=96, shuffle=True,
+                                    callbacks=[early_stopping], epochs=50, verbose=2)
 
         # K.clear_session()
 
-        # self.model.load_weights(nn_weights)
+        #self.model.load_weights(nn_weights)
 
         return self
 
@@ -309,21 +330,21 @@ class CNN1D(object):
 
     def save(self, classifier_file):
         _ending = '.h5py'
-        # _ending = '.h5'
+        #_ending = '.h5'
         if not classifier_file.endswith(_ending):
             classifier_file = classifier_file + _ending
-        # self.model.save(classifier_file)
+        #self.model.save(classifier_file)
         save_model(self.model, classifier_file)
         # self.model.save_weights(classifier_file)
 
     def load(self, classifier_file):
         _ending = '.h5py'
-        # _ending = '.h5'
+        #_ending = '.h5'
         if not classifier_file.endswith(_ending):
             classifier_file = classifier_file + _ending
         self.model = load_model(classifier_file)
         # self.init_serial_model()
-        # self.model.load_weights(classifier_file)
+        #self.model.load_weights(classifier_file)
 
     def cnn_model(self, embedding_matrix):
         print(time.strftime('%c'), 'creating embedding layer')
@@ -361,20 +382,20 @@ class CNN1D(object):
 
         self.model = Model(sequence_input, preds)
         self.model.compile(loss='categorical_crossentropy',
-                           optimizer='adam',
-                           metrics=['acc'])
+                      optimizer='adam',
+                      metrics=['acc'])
 
     def cnn_model_tag(self, embedding_matrix):
 
         print(time.strftime('%c'), 'creating embedding layer')
-        # embedding_tag = Embedding(self.vocab_size, self.embedding_dim, weights=[embedding_matrix],
+        #embedding_tag = Embedding(self.vocab_size, self.embedding_dim, weights=[embedding_matrix],
         #                          input_length=self.max_doc_length, trainable=False)
 
-        # embedding_notag = Embedding(self.vocab_size, self.embedding_dim, weights=[embedding_matrix],
+        #embedding_notag = Embedding(self.vocab_size, self.embedding_dim, weights=[embedding_matrix],
         #                            input_length=self.max_doc_length, trainable=False)
 
         embedding = Embedding(self.vocab_size, self.embedding_dim, weights=[embedding_matrix],
-                              input_length=self.max_doc_length, trainable=False)
+                            input_length=self.max_doc_length, trainable=False)
 
         # define model
         print(time.strftime('%c'), 'creating NN model')
@@ -421,8 +442,8 @@ class CNN1D(object):
 
         self.model = Model((tag_input, notag_input), preds)
         self.model.compile(loss='categorical_crossentropy',
-                           optimizer='adam',
-                           metrics=['acc'])
+                      optimizer='adam',
+                      metrics=['acc'])
 
     def __deepcopy__(self, memodict={}):
         cls = self.__class__

@@ -1,19 +1,19 @@
 #!/usr/bin/env python
 from __future__ import print_function
 
+import os
 import pickle
+from random import shuffle
 
 import numpy as np
-import os
-from random import shuffle
 from sklearn.metrics import precision_score, recall_score, f1_score
 
-from upclass.uniprot.classifier.dataset import TaggedDataset, SentenceDataset
-from upclass.uniprot.classifier.model import CoreClassifier
-from upclass.uniprot.input import preprocces
-from upclass.uniprot.input.article import extract_tags
-from upclass.uniprot.input.regressors import get_label_set
-from upclass.uniprot.input.utils import load_mlb
+from classifier.dataset import TaggedDataset, SentenceDataset
+from classifier.model import CoreClassifier
+from input import preprocces
+from input.article import extract_tags
+from input.regressors import get_label_set
+from input.utils import load_mlb
 
 
 def get_features(accession, pmid, articles=None, accessions=None, mtype='tag'):
@@ -61,7 +61,7 @@ def get_text(article_dict, tag_info, mtype='tag'):
 test_source = 'ceci'
 # test_source = 'new_sp'
 # test_source = 'ceci_new'
-# test_source = 'xaa'
+#test_source = 'xaa'
 
 mtype = 'tag'
 

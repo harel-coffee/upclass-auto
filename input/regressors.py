@@ -1,10 +1,15 @@
-import numpy as np
 from random import shuffle
+import datetime
+import re
+import numpy as np
 from sklearn import preprocessing
+import multiprocessing as mp
 
-ALPHA = 0.1
-STEPS = 200
-
+# ALPHA = 0.0001
+# STEPS = 100
+ALPHA = 0.025
+MIN_ALPHA = 0.0001
+STEPS = 100
 
 def get_label_encoder():
     labels = ['ARATH', 'BACSU', 'BOVIN', 'CAEEL', 'CANAL', 'CHICK', 'DANRE', 'DICDI', 'DROME',
@@ -88,15 +93,15 @@ def infer_model_tagged_regressor(model, doc_tag_in, doc_tag_out, text_dataset):
     reg_in, reg_out = (None, None)
 
     if doc_tag_in in text_dataset and len(text_dataset[doc_tag_in]) > 0:
-        print('infering doc_tag_in')
-        print(text_dataset[doc_tag_in][:5])
-        reg_in = model.infer_vector(doc_words=text_dataset[doc_tag_in], alpha=ALPHA, steps=STEPS)
-        print(reg_in[:5])
+        # print('infering doc_tag_in')
+        # print(text_dataset[doc_tag_in][:5])
+        reg_in = model.infer_vector(doc_words=text_dataset[doc_tag_in], alpha=ALPHA, epochs=STEPS)
+        # print(reg_in[:5])
     if doc_tag_out in text_dataset and len(text_dataset[doc_tag_out]) > 0:
-        print('infering doc_tag_out')
-        print(text_dataset[doc_tag_out][:5])
-        reg_out = model.infer_vector(doc_words=text_dataset[doc_tag_out], alpha=ALPHA, steps=STEPS)
-        print(reg_out[:5])
+        # print('infering doc_tag_out')
+        # print(text_dataset[doc_tag_out][:5])
+        reg_out = model.infer_vector(doc_words=text_dataset[doc_tag_out], alpha=ALPHA, epochs=STEPS)
+        # print(reg_out[:5])
     return reg_in, reg_out
 
 
@@ -120,7 +125,7 @@ def get_single_regressor(model, fid, text_dataset=None):
     reg = None
     if text_dataset is not None:
         if fid in text_dataset:
-            reg = model.infer_vector(doc_words=text_dataset[fid], alpha=ALPHA, steps=STEPS)
+            reg = model.infer_vector(doc_words=text_dataset[fid], alpha=ALPHA, epochs=STEPS)
     elif fid in model.docvecs.doctags:
         reg = model.docvecs[fid]
 
@@ -129,46 +134,59 @@ def get_single_regressor(model, fid, text_dataset=None):
     return reg
 
 
-def get_feature_set(models, doc_tags, in_set, out_set, text_tag=None, text_notag=None, mtype='tag'):
-    # print('models', models.keys())
-    # print('model type', mtype)
-    # print('doc_tags', doc_tags)
-    # print('text', text_tag)
-    doc_set, p_doc_tags, feature_list = (set(), [], [])
-    count = 0
+def __get_regressor(org_code, mtype, models, fid, prot_tag=None, text_tag=None, text_notag=None):
+    lf = np.array([org_code])
+    if mtype == 'tag' or mtype == 'both':
+        if 'tag_dbow' in models:
+            mreg = get_tagged_regressor(models['tag_dbow'], fid, prot_tag, text_dataset=text_tag)
+            lf = np.concatenate([lf, mreg])
+        if 'tag_dmc' in models:
+            mreg = get_tagged_regressor(models['tag_dmc'], fid, prot_tag, text_dataset=text_tag)
+            lf = np.concatenate([lf, mreg])
+    if mtype == 'notag' or mtype == 'both':
+        # if text_notag is not None and mtype != 'notag': # removed these two lines to work with inference no_tag
+        #    fid = ndt                                  # there was a comment before saying they were inserted to be compatible with
+        if 'notag_dbow' in models:  # text_url ???
+            mreg = get_single_regressor(models['notag_dbow'], fid, text_dataset=text_notag)
+            lf = np.concatenate([lf, mreg])
+        if 'notag_dmc' in models:
+            mreg = get_single_regressor(models['notag_dmc'], fid, text_dataset=text_notag)
+            lf = np.concatenate([lf, mreg])
+    return lf
+
+
+def __get_job_params(doc_tags, in_set, out_set):
+    doc_set = set()
+
     for odt in doc_tags:
         fid = get_file_id(odt)
         org_code = get_org_code(odt)
         prot_tag = get_protein_tag(odt)
         ndt = fid + '_' + prot_tag
+
         if (fid in in_set or (len(in_set) == 0 and fid not in out_set)) and ndt not in doc_set:
             doc_set.add(ndt)
-            p_doc_tags.append(ndt)
-            lf = np.array([org_code])
-            if mtype == 'tag' or mtype == 'both':
-                if 'tag_dbow' in models:
-                    print('getting tag_dbow regressors')
-                    mreg = get_tagged_regressor(models['tag_dbow'], fid, prot_tag, text_dataset=text_tag)
-                    lf = np.concatenate([lf, mreg])
-                if 'tag_dmc' in models:
-                    print('getting tag_dmc regressors')
-                    mreg = get_tagged_regressor(models['tag_dmc'], fid, prot_tag, text_dataset=text_tag)
-                    lf = np.concatenate([lf, mreg])
-            if mtype == 'notag' or mtype == 'both':
-                if text_notag is not None:  # added these two lines to be compatible with text_url format
-                    fid = ndt
-                if 'notag_dbow' in models:
-                    print('getting notag_dbow regressors')
-                    mreg = get_single_regressor(models['notag_dbow'], fid, text_dataset=text_notag)
-                    lf = np.concatenate([lf, mreg])
-                if 'notag_dmc' in models:
-                    print('getting notag_dmc regressors')
-                    mreg = get_single_regressor(models['notag_dmc'], fid, text_dataset=text_notag)
-                    lf = np.concatenate([lf, mreg])
-            feature_list.append(lf)
-            count += 1
+            yield ndt, org_code, fid, prot_tag
+
+
+def get_feature_set(models, doc_tags, in_set, out_set, text_tag=None, text_notag=None, mtype='tag', n_jobs=20):
+
+    start_time = datetime.datetime.now()
+
+    p_doc_tags, feature_list = [], []
+    count = 0
+
+    for ndt, org_code, fid, prot_tag in __get_job_params(doc_tags, in_set, out_set):
+        reg = __get_regressor(org_code, mtype, models, fid, prot_tag, text_tag, text_notag)
+        p_doc_tags.append(ndt)
+        feature_list.append(reg)
+
+        count += 1
         if count % 500 == 0:
-            print('%i docs processed' % count)
+            elapsed_time = datetime.datetime.now() - start_time
+            print(count, 'docs processed in', elapsed_time.total_seconds(), 'sec')
+            start_time = datetime.datetime.now()
+
     return p_doc_tags, feature_list
 
 
@@ -205,6 +223,21 @@ def get_labelled_set(models, in_set, out_set, cmap, mtype='both'):
     p_doc_tags, feature_list = get_feature_set(models, doc_tags, in_set, out_set, mtype=mtype)
 
     return p_doc_tags, feature_list, label_list
+
+
+def filter_single_doc(test_set, category_map):
+    freq = []
+    freq_set = {}
+    for i in test_set:
+        _doc_id = i[0]
+        _doc = re.sub(r'_.*', '', _doc_id)
+        _doc_class = sum([(i + 1) * j for i, j in enumerate(category_map[_doc_id])])
+        if _doc not in freq_set:
+            freq_set[_doc] = set()
+        if _doc_class not in freq_set[_doc]:
+            freq_set[_doc].add(_doc_class)
+            freq.append(i)
+    return freq
 
 
 def filter_single_class(doc_tags, label_list, feature_list):

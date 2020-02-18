@@ -1,8 +1,7 @@
 from __future__ import print_function
 
-from collections import namedtuple
-
 import os
+from collections import namedtuple
 
 
 def join_text(doc):

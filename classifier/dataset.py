@@ -10,10 +10,10 @@ Model UniProt dataset
 
 from __future__ import print_function
 
+import os
 from collections import namedtuple
 
 import numpy as np
-import os
 
 
 def join_text(doc):
@@ -204,12 +204,12 @@ class ProcessedDataset(object):
 
     def get_csv_content(self, cfile):
         nfile = cfile.replace('.csv', '.npy')
-        # if os.path.exists(nfile):
-        #    content = np.load(nfile)
-        # else:
-        content = np.genfromtxt(cfile, delimiter=',')
-        #    nfile = cfile.replace('.csv', '.npy')
-        #    np.save(nfile, content)
+        if os.path.exists(nfile):
+            content = np.load(nfile)
+        else:
+            content = np.genfromtxt(cfile, delimiter=',')
+            nfile = cfile.replace('.csv', '.npy')
+            np.save(nfile, content)
         return content
 
     def get_npy_content(self, cfile):

@@ -23,15 +23,17 @@ Example: python -m uniprot.embedding.train_model -s source_dir -d dest_dir -n 16
 from __future__ import print_function
 
 import logging
+import os.path
 import pickle
 import sys
+import re
+
 from collections import defaultdict
+from copy import deepcopy
+from random import seed
 
 import numpy as np
-import os.path
-from copy import deepcopy
 from keras import backend as K
-from random import seed
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import precision_score, recall_score, f1_score, log_loss
@@ -43,10 +45,10 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.svm import LinearSVC
 from sklearn.tree import DecisionTreeClassifier
 
-from upclass.uniprot import classifier
-from upclass.uniprot.classifier.cnn import CNN1D
-from upclass.uniprot.classifier.multi_label_curve import plot_metric, compute_metrics, compute_threshold
-from upclass.uniprot.input.utils import load_mlb
+from classifier.cnn import CNN1D
+from classifier.multi_label_curve import plot_metric, compute_metrics, compute_threshold
+from input.utils import load_mlb
+
 
 UNIPROT_CLASSES = (
     (1, 'Expression'),
@@ -132,66 +134,72 @@ class CoreClassifier(object):
         self.best_params['f1_score'] = 0
         self.best_params['log_loss'] = 100
 
-    def fit(self, train_regressors=None, train_targets=None, C=1, w2v_model=None, no_tag=False):
+    def fit(self, train_regressors=None, train_targets=None, C=1, w2v_model=None, no_tag=False, validation=None):
         random_state = np.random.RandomState(0)
 
         self.C = C
 
-        if self.name == 'nbayes':
-            self.scaler = MinMaxScaler()
-        else:
-            self.scaler = StandardScaler()
-
-        if self.name != 'cnn':
-            self.scaler.fit(train_regressors)
-            train_regressors = self.scaler.transform(train_regressors)
+        if self.name == 'cnn':
             logger.info('trainning %s: length and shape-> %i and %i; target shape -> %i'
-                        % (self.name, train_regressors.shape[0], train_regressors.shape[1], len(train_targets[0])))
+                        % (self.name, len(train_regressors), len(train_regressors[0]), len(list(train_targets.values())[0])) )
 
-        if self.name == 'nbayes':
-            classifier = OneVsRestClassifier(MultinomialNB(alpha=C), n_jobs=self.n_workers)
-
-        elif self.name == 'dtree':
-            classifier = OneVsRestClassifier(DecisionTreeClassifier(max_depth=C, criterion='gini',
-                                                                    class_weight='balanced'),
-                                             n_jobs=self.n_workers)
-
-        elif self.name == 'rforest':
-            classifier = OneVsRestClassifier(RandomForestClassifier(n_estimators=C, criterion='gini',
-                                                                    class_weight='balanced', oob_score=True, verbose=1),
-                                             n_jobs=self.n_workers)
-
-        elif self.name == 'logistic':
-            classifier = OneVsRestClassifier(
-                LogisticRegression(solver='lbfgs', C=C, max_iter=200, verbose=1, multi_class='multinomial',
-                                   random_state=random_state), n_jobs=self.n_workers)
-        elif self.name == 'knn':
-            classifier = OneVsRestClassifier(KNeighborsClassifier(n_neighbors=C, n_jobs=self.n_workers),
-                                             n_jobs=self.n_workers)
-
-        elif self.name == 'svm':
-            classifier = OneVsRestClassifier(LinearSVC(C=C, max_iter=200, loss='squared_hinge',
-                                                       # class_weight='balanced',
-                                                       verbose=1, random_state=random_state),
-                                             n_jobs=self.n_workers)
-            # classifier = OneVsRestClassifier(SVC(kernel='rbf', probability=False, decision_function_shape='ovo',
-            #                                     class_weight='balanced', verbose=1),
-            #                                 n_jobs=self.n_workers)
-
-        elif self.name == 'mlp':
-            classifier = MLPClassifier(solver='adam', activation='logistic', alpha=C, max_iter=200,
-                                       learning_rate_init=0.001,
-                                       early_stopping=True, verbose=True, hidden_layer_sizes=(128,),
-                                       random_state=random_state)
-
-        elif self.name == 'cnn':
             K.clear_session()
             n_classes = 11
             max_doc_length = 1500
             classifier = CNN1D(w2v_model, n_classes, max_doc_length, filters=128, kernel_size=5, l2_lambda=C,
                                drop_out=0.5, batch_size=96, num_epochs=50, is_tag=(not no_tag), limit=None)
 
-        self.predictor = classifier.fit(train_regressors, train_targets)
+            self.predictor = classifier.fit(train_regressors, train_targets, validation=validation)
+        else:
+
+            logger.info('trainning %s: length and shape-> %i and %i; target shape -> %i'
+                        % (self.name, train_regressors.shape[0], train_regressors.shape[1], len(train_targets[0])))
+
+            if self.name == 'nbayes':
+                self.scaler = MinMaxScaler()
+            else:
+                self.scaler = StandardScaler()
+
+            self.scaler.fit(train_regressors)
+            train_regressors = self.scaler.transform(train_regressors)
+
+            if self.name == 'nbayes':
+                classifier = OneVsRestClassifier(MultinomialNB(alpha=C), n_jobs=self.n_workers)
+
+            elif self.name == 'dtree':
+                classifier = OneVsRestClassifier(DecisionTreeClassifier(max_depth=C, criterion='gini',
+                                                                        class_weight='balanced'),
+                                                 n_jobs=self.n_workers)
+
+            elif self.name == 'rforest':
+                classifier = OneVsRestClassifier(RandomForestClassifier(n_estimators=C, criterion='gini',
+                                                                        class_weight='balanced', oob_score=True, verbose=1),
+                                                 n_jobs=self.n_workers)
+
+            elif self.name == 'logistic':
+                classifier = OneVsRestClassifier(
+                    LogisticRegression(solver='lbfgs', C=C, max_iter=200, verbose=1, multi_class='multinomial',
+                                       random_state=random_state), n_jobs=self.n_workers)
+            elif self.name == 'knn':
+                classifier = OneVsRestClassifier(KNeighborsClassifier(n_neighbors=C, n_jobs=self.n_workers),
+                                                 n_jobs=self.n_workers)
+
+            elif self.name == 'svm':
+                classifier = OneVsRestClassifier(LinearSVC(C=C, max_iter=200, loss='squared_hinge',
+                                                           # class_weight='balanced',
+                                                           verbose=1, random_state=random_state),
+                                                 n_jobs=self.n_workers)
+                # classifier = OneVsRestClassifier(SVC(kernel='rbf', probability=False, decision_function_shape='ovo',
+                #                                     class_weight='balanced', verbose=1),
+                #                                 n_jobs=self.n_workers)
+
+            elif self.name == 'mlp':
+                classifier = MLPClassifier(solver='adam', activation='logistic', alpha=C, max_iter=200,
+                                           learning_rate_init=0.001,
+                                           early_stopping=True, verbose=True, hidden_layer_sizes=(128,),
+                                           random_state=random_state)
+
+            self.predictor = classifier.fit(train_regressors, train_targets)
 
     def predict(self, test_regressors, queries):
         self.queries = queries
@@ -270,6 +278,9 @@ class CoreClassifier(object):
             filename = os.path.join(output_dir, filename)
 
         np.savetxt(filename, results, delimiter=',', fmt='%.4f')
+        with open(filename.replace('.res', '.qid'), mode='w') as f:
+            for qid in self.queries:
+                print(qid, file=f)
 
     def print_results2(self, results=None, name=None, output_dir=None, test_set=[]):
         if name is None:
@@ -288,7 +299,13 @@ class CoreClassifier(object):
             for i in range(len(test_set)):
                 qid = test_set[i].replace('_', '\t')
                 labels = sorted([LABEL_MAP[r] for r in results[i] if r in LABEL_MAP])
-                pclass = ''.join(['[' + cl + ']' for cl in labels])
+                # pclass = ''.join(['[' + cl + ']' for cl in labels])
+                pclass = ''
+                for _r in labels:
+                    # requested by Ceci
+                    _tokens = re.sub(r'\s+', ' ', re.sub(r'([^\w ]+)', ' \\1 ', _r)).strip().split()
+                    _tokens = [_t.title() if re.search(r'[a-z]', _t) else _t for _t in _tokens]
+                    pclass += '[' + ' '.join(_tokens) + ']'
                 print(qid + '\t' + pclass, file=f)
         f.close()
 
@@ -304,20 +321,25 @@ class CoreClassifier(object):
 
     def save_classifier_model(self, classifier_file, best=True):
         if best:
-            # self.predictor = deepcopy(self.best_predictor)
+            #self.predictor = deepcopy(self.best_predictor)
             self.predictor = self.best_predictor
         self.C = self.best_params['c']
-        # (self.predictions, self.best_results, self.best_predictor) = (None, None, None)
+        #(self.predictions, self.best_results, self.best_predictor) = (None, None, None)
         (self.predictions, self.best_results) = (None, None)
 
         if not classifier_file.endswith('.pkl'):
             classifier_file = classifier_file + '.pkl'
         if self.name == 'cnn':
             _ending = '.h5py'
-            # _ending = '.h5'
+            #_ending = '.h5'
             hd5_file = classifier_file.replace('.pkl', _ending)
             self.predictor.save(hd5_file)
             del self.predictor.model
+        print('saving model with param C:', self.C, 'to')
+        print(classifier_file)
+        print('precision (micro):', self.best_params['prec_micro'])
+        print('f1_score (micro):', self.best_params['f1_score'])
+        print()
         with open(classifier_file, 'wb') as pickle_file:
             pickle.dump(self, pickle_file, pickle.HIGHEST_PROTOCOL)
         pickle_file.close()
@@ -326,13 +348,15 @@ class CoreClassifier(object):
     @staticmethod
     def load_classifier_model(classifier_file):
         mcl = None
+        if not classifier_file.endswith('.pkl'):
+            classifier_file = classifier_file + '.pkl'
+
         with open(classifier_file, 'rb') as pickle_file:
-            sys.modules['classifier'] = classifier
             mcl = pickle.load(pickle_file)
         pickle_file.close()
         if mcl.name == 'cnn':
             _ending = '.h5py'
-            # _ending = '.h5'
+            #_ending = '.h5'
             hd5_file = classifier_file.replace('.pkl', _ending)
             mcl.predictor.load(hd5_file)
         return mcl

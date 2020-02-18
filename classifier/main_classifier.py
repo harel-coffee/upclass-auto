@@ -1,23 +1,25 @@
 import logging
-import sys
-
-import numpy as np
 import os.path
-import plac
-from gensim.models.doc2vec import Doc2Vec
+import sys
 from random import seed
 
-from upclass.uniprot.classifier.dataset import ProcessedDataset, TaggedDataset, SentenceDataset
-from upclass.uniprot.classifier.model import CoreClassifier
-from upclass.uniprot.classifier.uniprot_classifier import train_uniprot_model, test_uniprot_model
-from upclass.uniprot.input.utils import get_class_map
+import numpy as np
+import plac
+from gensim.models.doc2vec import Doc2Vec
+
+from classifier.dataset import ProcessedDataset, TaggedDataset, SentenceDataset
+from classifier.model import CoreClassifier
+from classifier.uniprot_classifier import train_uniprot_model, test_uniprot_model
+from input.utils import get_class_map
 
 seed(a=41)
 
 random_state = np.random.RandomState(0)
 
-MODEL_TAG_FILE = '/data/user/teodoro/uniprot/model/tag/dbow'
-MODEL_NOTAG_FILE = '/data/user/teodoro/uniprot/model/no_tag/dbow'
+#MODEL_TAG_FILE = '/data/user/teodoro/uniprot/model/tag/dbow'
+MODEL_TAG_FILE = '/data/user/teodoro/uniprot/model/pub_model/tag/dbow'
+#MODEL_NOTAG_FILE = '/data/user/teodoro/uniprot/model/no_tag/dbow'
+MODEL_NOTAG_FILE = '/data/user/teodoro/uniprot/model/pub_model/no_tag/dbow'
 
 
 @plac.annotations(
@@ -68,10 +70,10 @@ def main(classifier='mlp', source_dir=None, output_dir=None, train_classifier=Fa
             train_set = ProcessedDataset(source_dir, type='train')
             dev_set = ProcessedDataset(source_dir, type='dev')
 
-        model = train_uniprot_model(classifier, train_set, dev_set, w2v_model=w2v_model, filter_train=filter_train,
+        train_uniprot_model(classifier, train_set, dev_set, output_dir, w2v_model=w2v_model, filter_train=filter_train,
                                     no_tag=no_tag, category_map=category_map, n_workers=n_workers)
-        classifier_file = os.path.join(output_dir, classifier + '_' + str(model.best_params['c']))
-        model.save(classifier_file)
+        #classifier_file = os.path.join(output_dir, classifier + '_' + str(model.best_params['c']))
+        #model.save(classifier_file)
 
     else:
         if classifier == 'cnn':
@@ -79,24 +81,22 @@ def main(classifier='mlp', source_dir=None, output_dir=None, train_classifier=Fa
             if no_tag:
                 test_set = SentenceDataset(os.path.join(source_dir, 'test/sentence'), category_map=category_map,
                                            limit=None)
-                # test_set = BiomedDataset(os.path.join(source_dir, 'test/sentence'), category_map=None, limit=None)
+                #test_set = BiomedDataset(os.path.join(source_dir, 'test/sentence'), category_map=None, limit=None)
             else:
                 test_set = TaggedDataset(os.path.join(source_dir, 'test/tag'))
-                # test_set = TaggedDataset(source_dir)
+                #test_set = TaggedDataset(source_dir)
         else:
             test_set = ProcessedDataset(source_dir, type='test', eval=eval)
 
         model = CoreClassifier(classifier)
         model = model.load(classifier_model)
-        results = test_uniprot_model(model, test_set, filter=filter_train, eval=eval, query_doc=query_doc,
-                                     category_map=category_map)
+        results = test_uniprot_model(model, test_set, filter=filter_train, eval=eval, query_doc=query_doc, category_map=category_map)
 
         if eval:
             model.print_results(results, name=classifier + '_' + str(model.best_params['c']),
                                 output_dir=output_dir)
         else:
-            model.print_results2(results, name=classifier + '_' + str(model.best_params['c']), output_dir=output_dir,
-                                 test_set=[])
+            model.print_results2(results, name=classifier + '_' + str(model.best_params['c']), output_dir=output_dir, test_set=[])
 
 
 if __name__ == '__main__':

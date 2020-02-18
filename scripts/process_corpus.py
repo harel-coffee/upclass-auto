@@ -2,17 +2,20 @@
 from __future__ import print_function
 
 import multiprocessing
+import os
 import pickle
 from datetime import datetime
 from optparse import OptionParser
 
 import nltk
-import os
 from gensim import utils as gsutils
-from upclass.uniprot.input.article import parse_pmc, parse_pubmed, parse_biomed, \
+
+from input.article import parse_pmc, parse_pubmed, parse_biomed, \
     read_plain, read_sentence, extract_tokens, extract_tags, \
     clear_sentence, load_pmc_pmid_map, match_sentence
 
+SOURCE_FILE = '/data/user/teodoro/uniprot/annotation/batch_201905/acc_info.sprot'
+QUERY_FILE = '/data/user/teodoro/pycharm-repo/uniprot/resources/data/abb_ac2pmid_noCat_2019_05.txt'
 
 # P29358||P68251  7890696 1433B_SHEEP     14-3-3 protein beta/alpha||14-3-3 protein beta/alpha, N-terminally processed||KCIP-1||Protein kinase C inhibitor protein 1      YWHAB   PTM/processing||Unclassified
 def load_map(source_file):
@@ -47,8 +50,7 @@ def load_map_v2(source_file):
     # source = '/data/user/teodoro/uniprot/annotation/train_data.tsv'
     # source = '/data/user/teodoro/pycharm-repo/uniprot/scripts/ceci_test_data.tsv'
     acc_rel = set()
-    query_file = '/data/user/teodoro/pycharm-repo/uniprot/resources/abb_ac2pmid_noCat.txt'
-    with open(query_file, encoding='utf-8') as f:
+    with open(QUERY_FILE, encoding='utf-8') as f:
         for line in f:
             (acc, pmid) = line.strip().split('\t')
             acc_rel.add(acc)
@@ -78,31 +80,35 @@ def load_map_v2(source_file):
 def extract_tags_biomed(sent_dict, prot_info, query):
     pre_text = {}
     stats = {}
-    stats_factors = ['INFN', 'INGEN', 'INACC', 'INPROT']
+    stats_factors = ['_INFN_', '_INGEN_', '_INACC_', '_INPROT_']
     for i in stats_factors:
         stats[i] = 0
 
     for doc_section_type, sentences in sent_dict.items():
         if (doc_section_type is not None and doc_section_type != ''
                 and sentences is not None and len(sentences) > 0):
-            (pmid, section_type) = doc_section_type.split('_')
+            try:
+                (pmid, section_type) = doc_section_type.split('_')
 
-            for accession in query[pmid]:
-                doc_id = pmid + '_' + accession
-                if accession in prot_info:
-                    info = prot_info[accession]
-                else:
-                    info = {'protein': ''}
+                for accession in query[pmid]:
+                    doc_id = pmid+'_'+accession
+                    if accession in prot_info:
+                        info = prot_info[accession]
+                    else:
+                        info = {'protein': ''}
 
-                line_number = 1
-                for sentence in sentences:
-                    if doc_id not in pre_text:
-                        pre_text[doc_id] = {}
-                    if section_type not in pre_text[doc_id]:
-                        pre_text[doc_id][section_type] = {}
-                    pre_text[doc_id][section_type][line_number] = match_sentence(sentence, info)
+                    line_number = 1
+                    for sentence in sentences:
+                        if doc_id not in pre_text:
+                            pre_text[doc_id] = {}
+                        if section_type not in pre_text[doc_id]:
+                            pre_text[doc_id][section_type] = {}
+                        pre_text[doc_id][section_type][line_number] = match_sentence(sentence, info)
 
-                    line_number += 1
+                        line_number += 1
+            except Exception as e:
+                print('cannot extract tags for doc section', doc_section_type)
+                print(e)
     return pre_text, stats
 
 
@@ -142,9 +148,9 @@ def parse_source(args):
 
 
 def parse_plain(args):
-    source_file, dest_file = args
+    source_file, dest_file, clean_sent = args
     pre_text = read_plain(source_file)
-    pre_text = extract_tokens(pre_text, sent_extract=True)
+    pre_text = extract_tokens(pre_text, sent_extract=True, clean_sent=clean_sent)
     save_text(dest_file, pre_text=pre_text)
     return os.path.split(dest_file)[1]
 
@@ -165,7 +171,12 @@ def parse_sentence(args):
         pre_text, stats = extract_tags(pre_text, tag_info)
 
     for k, v in pre_text.items():
-        dest_file_prot = dest_file + '_' + k
+        if query is not None:
+            if not os.path.isdir(dest_file):
+                os.makedirs(dest_file)
+            dest_file_prot = dest_file + '/' + k
+        else:
+            dest_file_prot = dest_file + '_' + k
         save_text(dest_file_prot, pre_text=v)
 
     return os.path.split(dest_file)[1], stats
@@ -234,17 +245,19 @@ def get_pmid(file_id, pmc_pmid_map):
     return file_id
 
 
-def work_plain(source, dest, ext='txt', n_workers=4):
+def work_plain(source, dest, clean_sent=True, ext='txt', n_workers=4):
     count = 0
     start_time, offset_time = (datetime.now(), datetime.now())
     dext = 'txt'
 
-    # pmc_pmid_map = load_pmc_pmid_map()
+    #pmc_pmid_map = load_pmc_pmid_map()
     pmc_pmid_map = {}
 
     cores = get_cores(n_workers)
     pool = multiprocessing.Pool(cores)
-    jobs = ((os.path.join(source, fn), os.path.join(dest, get_pmid(os.path.splitext(fn)[0], pmc_pmid_map) + '.' + dext))
+    jobs = ((os.path.join(source, fn),
+             os.path.join(dest, get_pmid(os.path.splitext(fn)[0], pmc_pmid_map) + '.' + dext),
+             clean_sent)
             for fn in os.listdir(source) if fn.endswith(ext))
 
     for group in gsutils.chunkize(jobs, chunksize=4 * cores, maxsize=1):
@@ -268,26 +281,25 @@ def work_sentence(source, dest, type, class_map, ext='txt', n_workers=4):
     print('### loading jobs')
     # source file, dest file (until PMID), info for PMID
     if type == 'biomed':
-        query_file = '/data/user/teodoro/pycharm-repo/uniprot/resources/abb_ac2pmid_noCat.txt'
         query = {}
-        with open(query_file, encoding='utf-8') as f:
+        with open(QUERY_FILE, encoding='utf-8') as f:
             for line in f:
                 (acc, pmid) = line.strip().split('\t')
                 if pmid not in query:
                     query[pmid] = set()
                 query[pmid].add(acc)
 
-        jobs = ((os.path.join(source, fn), os.path.join(dest, fn), class_map, query) for fn in os.listdir(source)
-                if fn.endswith(ext))
+        jobs = ((os.path.join(source, fn), os.path.join(dest, fn).replace('.'+ext, ''), class_map, query)
+                for fn in os.listdir(source) if fn.endswith(ext))
     else:
         pmc_pmid_map = load_pmc_pmid_map()
         jobs = ((os.path.join(source, fn), os.path.join(dest, get_pmid(os.path.splitext(fn)[0], pmc_pmid_map)),
-                 class_map[get_pmid(os.path.splitext(fn)[0], pmc_pmid_map)], None) for fn in os.listdir(source) if
-                fn.endswith(ext))
+             class_map[get_pmid(os.path.splitext(fn)[0], pmc_pmid_map)], None) for fn in os.listdir(source) if
+            fn.endswith(ext))
     print('### loading jobs done')
     # process the corpus in smaller chunks of docs, because multiprocessing.Pool
     # is dumb and would load the entire input into RAM at once...
-    for group in gsutils.chunkize(jobs, chunksize=4 * cores, maxsize=2):
+    for group in gsutils.chunkize(jobs, chunksize=4 * cores, maxsize=1):
         for fid, f_stats in pool.imap(parse_sentence, group):  # chunksize=100 ):
             count += 1
             stats[fid] = f_stats
@@ -362,9 +374,11 @@ def main():
     parser.add_option('-t', '--type', dest='type',
                       help='source type [pmc, biomed, pubmed]')
     parser.add_option('-n', '--n_workers', dest='n_workers',
-                      help='n workers')
+                      help='n workers', default='1')
     parser.add_option('-p', '--phase', dest='phase',
                       help='processing phase')
+    parser.add_option('-c', '--clean',
+                      action='store_false', dest='clean', default=True)
     parser.add_option('-v', '--verbose',
                       action='store_true', dest='verbose')
     parser.add_option('-q', '--quiet',
@@ -377,18 +391,13 @@ def main():
     elif options.phase == '1.5':
         work_tokenizer(options.source, options.destination, 'txt', n_workers=options.n_workers)
     elif options.phase == '2':
-        # load_stops()
-        # load_sent_tokeniyzer()
-        work_plain(options.source, options.destination, 'txt', n_workers=options.n_workers)
+        work_plain(options.source, options.destination, options.clean, 'txt', n_workers=options.n_workers)
     elif options.phase == '3':
-        # source_file = '/data/user/teodoro/uniprot/annotation/train_data.tsv'
-        source_file = '/data/user/teodoro/uniprot/annotation/NAR_annotation/acc_info.sprot'
         if options.type == 'biomed':
-            class_map = load_map_v2(source_file)
+            class_map = load_map_v2(SOURCE_FILE)
         else:
-            class_map = load_map(source_file)
-        work_sentence(options.source, options.destination, options.type, class_map, ext='txt',
-                      n_workers=options.n_workers)
+            class_map = load_map(SOURCE_FILE)
+        work_sentence(options.source, options.destination, options.type, class_map, ext='txt', n_workers=options.n_workers)
     else:
         print('###[ERROR] unknown phase')
 

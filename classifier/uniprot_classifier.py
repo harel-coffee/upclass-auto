@@ -1,14 +1,16 @@
 from __future__ import print_function
 
+import os
+import re
 import logging
 from pprint import pprint
-
-import numpy as np
 from random import seed
 
-from upclass.uniprot.classifier.model import CoreClassifier
-from upclass.uniprot.input.regressors import filter_single_class, get_label_set
-from upclass.uniprot.input.utils import order_test_set
+import numpy as np
+
+from classifier.model import CoreClassifier
+from input.regressors import filter_single_class, filter_single_doc, get_label_set
+from input.utils import order_test_set
 
 seed(a=41)
 
@@ -30,8 +32,8 @@ logging.root.setLevel(level=logging.INFO)
 #    return docids, labels
 
 
-def train_uniprot_model(name, train_set, dev_set, filter_train=True, w2v_model=None, no_tag=False, category_map=None,
-                        n_workers=12):
+def train_uniprot_model(name, train_set, dev_set, output_dir, filter_train=True, w2v_model=None,
+                        no_tag=False, category_map=None, n_workers=12):
     logger.info('training classifier %s' % (name))
 
     # prepare train and test input data
@@ -54,26 +56,27 @@ def train_uniprot_model(name, train_set, dev_set, filter_train=True, w2v_model=N
     # training parameter range
     if name == 'nbayes':
         # cs = [0.01, 0.1, 1, 10, 50, 100, 150, 200, 500]
-        cs = np.logspace(-4, 1, 10)
+        cs = np.logspace(-5, 1, 10)
     elif name == 'logistic':
         # cs = [0.00001, 0.0001, 0.001, 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 1, 1.15]
-        cs = np.logspace(-4, 1, 10)
+        cs = np.logspace(-5, 1, 10)
     elif name == 'mlp':
         # cs = [0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.15]
-        cs = np.logspace(-4, 1, 10)
+        cs = np.logspace(-5, 1, 10)
     elif name == 'svm':
         # cs = [0.00001, 0.0001, 0.001, 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 1, 1.15]
-        cs = np.logspace(-4, 1, 10)
+        cs = np.logspace(-5, 1, 10)
     elif name == 'dtree':
         cs = [1, 2, 5, 7, 10, 12, 15, 20]
     elif name == 'rforest' or name == 'knn':
         cs = [10, 25, 50, 100, 150, 200]
     elif name == 'cnn':
-        # cs = [0.00001]
-        cs = np.logspace(-3, 0, 5)  # l2_lambda
+        #cs = [0.00001]
+        cs = np.logspace(-5, 1, 10)  # l2_lambda
         # cs = [2, 3, 10, 25] #kernel size
 
     # train classifier
+    best_classifier_model_file = os.path.join(output_dir, name)
     best_prec = 0
     count = 0
     for i in cs:
@@ -81,19 +84,21 @@ def train_uniprot_model(name, train_set, dev_set, filter_train=True, w2v_model=N
         classifier = CoreClassifier(name, n_workers=n_workers)
 
         logger.info('training classifier %s with param %f' % (classifier.name, i))
-        classifier.fit(train_regressors, train_targets, C=i, w2v_model=w2v_model, no_tag=no_tag)
+        classifier.fit(train_regressors, train_targets, C=i, w2v_model=w2v_model, no_tag=no_tag,
+                       validation=(dev_regressors, dev_targets))
 
         print('len dev reg', len(dev_regressors))
         classifier.predict_proba(dev_regressors, dev_targets)
         print('len class queries', len(classifier.queries))
         if classifier.name == 'cnn':
             dev_docs, dev_labels = get_label_set(classifier.queries, [], [], dev_targets)
-            dev_labels = np.asarray(dev_labels)
+            dev_labels = np.asarray(dev_labels, dtype=int)
         else:
             dev_labels = dev_targets
         classifier.eval(dev_labels)
         if best_prec < classifier.best_params['prec_micro']:
             best_prec = classifier.best_params['prec_micro']
+            classifier.save(best_classifier_model_file, best=False)
             count = 0
         else:
             count += 1
@@ -104,6 +109,8 @@ def train_uniprot_model(name, train_set, dev_set, filter_train=True, w2v_model=N
         print('####################')
         print('####################')
     # print best parameters
+    classifier = CoreClassifier(name, n_workers=n_workers)
+    classifier = classifier.load_classifier_model(best_classifier_model_file)
     pprint(classifier.best_params)
 
     return classifier
@@ -126,10 +133,14 @@ def test_uniprot_model(classifier, test_set, filter=False, eval=False, query_doc
 
     if classifier.name == 'cnn':
         logger.info('loading %s test data' % classifier.name)
-        if eval:
+        # TODO implement CNN filter
+        if eval and filter:
+            freq = filter_single_doc(test_set, category_map)
+            test_targets, test_regressors = (category_map, freq)
+        elif eval:
             test_targets, test_regressors = (category_map, [i for i in test_set])
         else:
-            # test_targets, test_regressors = ([doc.tags[0] for doc in test_set], [i for i in test_set])
+            #test_targets, test_regressors = ([doc.tags[0] for doc in test_set], [i for i in test_set])
             test_regressors = [i for i in test_set]
             test_targets = [doc[0] for doc in test_regressors]
     else:

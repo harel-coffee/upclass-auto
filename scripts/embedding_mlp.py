@@ -1,11 +1,8 @@
-import numpy as np
 import os
 import time
-from classifier.dataset import SentenceDataset, TaggedDataset
-from classifier.multi_label_curve import compute_metrics, compute_threshold
+
+import numpy as np
 from gensim.models.doc2vec import Doc2Vec
-from input.regressors import get_label_set
-from input.utils import get_class_map
 from keras import regularizers
 from keras.callbacks import EarlyStopping, ModelCheckpoint, TensorBoard
 from keras.layers import Conv1D, GlobalMaxPooling1D, MaxPooling1D, BatchNormalization, Dense
@@ -17,6 +14,11 @@ from keras.preprocessing.sequence import pad_sequences
 from numpy import zeros
 from sklearn.metrics import precision_score, recall_score, f1_score
 from sklearn.preprocessing import OneHotEncoder
+
+from classifier.dataset import SentenceDataset, TaggedDataset
+from classifier.multi_label_curve import compute_metrics, compute_threshold
+from input.regressors import get_label_set
+from input.utils import get_class_map
 
 MAX_DOC_LENGTH = 1500
 N_LABELS = 11

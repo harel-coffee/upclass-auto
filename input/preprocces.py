@@ -5,17 +5,17 @@ from urllib.request import urlopen
 
 from lxml import etree
 
-from upclass.uniprot.classifier.dataset import TaggedDataset, SentenceDataset
-from upclass.uniprot.input.article import parse_pubmed, parse_pmc, extract_tokens, extract_tags, clear_sentence
-from upclass.uniprot.input.regressors import get_feature_set
-from upclass.uniprot.input.uniprot_entry import parse_from_accession
+from classifier.dataset import TaggedDataset, SentenceDataset
+from input.article import parse_pubmed, parse_pmc, extract_tokens, extract_tags, clear_sentence
+from input.regressors import get_feature_set
+from input.uniprot_entry import parse_from_accession
 
 ENTREZ_BASE = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=%s&id=%s&tool=%s&email=%s&format=xml'
 
 TRANS_BASE = 'https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?ids=%s&tool=%s&email=%s'
 
 
-def parse_from_url(url, db=None):
+def parse_from_url(url, db=None, clean_sent=True):
     pre_text = {}
     file = urlopen(url)
     if db == 'pmc':
@@ -23,7 +23,7 @@ def parse_from_url(url, db=None):
     else:
         pre_text = parse_pubmed(file)
 
-    pre_text = extract_tokens(pre_text, sent_extract=True)
+    pre_text = extract_tokens(pre_text, sent_extract=True, clean_sent=clean_sent)
 
     return pre_text
 
@@ -144,7 +144,7 @@ def tag_article(models, accession, pmid, articles=None, accessions=None, mtype='
     return feature_list, articles, accessions
 
 
-def get_features(models, pmid, article_dict, tag_info, mtype):
+def get_features(models, pmid, article_dict, tag_info, mtype, n_jobs=20):
     pre_text, stats = extract_tags(article_dict, tag_info)
 
     protein = list(tag_info.keys())[0]
@@ -163,7 +163,7 @@ def get_features(models, pmid, article_dict, tag_info, mtype):
 
     doc_tags = tag_doc.keys()
     doc_tags, feature_list = get_feature_set(models, doc_tags, [], [], text_tag=tag_doc, text_notag=no_tag_doc,
-                                             mtype=mtype)
+                                             mtype=mtype, n_jobs=n_jobs)
 
     return feature_list
 

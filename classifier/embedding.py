@@ -24,19 +24,20 @@ from __future__ import print_function
 
 import logging
 import multiprocessing
+import os
 import sys
 from collections import OrderedDict
-from collections import namedtuple
 from contextlib import contextmanager
 from datetime import datetime
+from random import shuffle
 from timeit import default_timer
 
-import os
 import plac
 from gensim.models.doc2vec import Doc2Vec, FAST_VERSION
-from random import shuffle
 
-from .dataset import TaggedDataset
+from collections import namedtuple
+
+from classifier.dataset import TaggedDataset
 
 
 @contextmanager
@@ -71,7 +72,7 @@ class SentenceDataset(object):
                     words = ''
                     with open(source_file, encoding='utf8') as f:
                         for line_no, line in enumerate(f):
-                            words += ' ' + line.strip()
+                            words += ' '+line.strip()
                     f.close()
                     if doc_id is not None:
                         yield self.dataset(words.split(), [doc_id])

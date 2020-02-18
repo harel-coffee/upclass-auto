@@ -2,17 +2,21 @@
 
 # First aggregate all false positive rates
 import math
+
 import matplotlib
 import numpy as np
 from scipy import interp
 from sklearn.metrics import auc, roc_curve, precision_recall_curve, average_precision_score
 
-from upclass.uniprot.input.utils import load_mlb
+from input.utils import load_mlb
 
 matplotlib.use('Agg')
 
 import matplotlib.pyplot as plt
 
+g_scale = 0.5
+g_ratio_l = 16.18 * g_scale
+g_ratio_a = 10 * g_scale
 
 def plot_curve(y_real, y_pred, n_classes, p_name=None):
     # Compute ROC curve and ROC area for each class
@@ -53,7 +57,7 @@ def plot_curve(y_real, y_pred, n_classes, p_name=None):
     print('threshold (dist %.2f): %.2f' % (dist_roc, threshold['best']))
 
     # Plot all ROC curves
-    fig = plt.figure()
+    fig = plt.figure(figsize=(g_ratio_l, g_ratio_a))
     plt.plot(fpr['micro'], tpr['micro'],
              label='micro-average (area = {0:0.2f})'
                    ''.format(roc_auc['micro']),
@@ -74,9 +78,12 @@ def plot_curve(y_real, y_pred, n_classes, p_name=None):
     mlb = load_mlb()
 
     for i, color in zip(range(n_classes), rgb):
+        _cat = mlb.classes_[i]
+        if _cat == "unclassified":
+            _cat = "miscellaneous"
         plt.plot(fpr[i], tpr[i], color=color, linewidth=1, linestyle='--',
                  label='{0} (area = {1:0.2f})'
-                       ''.format(mlb.classes_[i], roc_auc[i]), alpha=.8)
+                       ''.format(_cat, roc_auc[i]), alpha=.8)
 
     plt.plot([0, 1], [0, 1], 'k--', linewidth=1)
     plt.xlim([0.0, 1.0])
@@ -84,11 +91,11 @@ def plot_curve(y_real, y_pred, n_classes, p_name=None):
     plt.xlabel('False Positive Rate (1 - Specificity)')
     plt.ylabel('True Positive Rate (Sensitivity)')
     plt.title('ROC for UniProt classes')
-    plt.legend(loc='lower right')
+    plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
     # plt.show()
     if p_name is None:
         p_name = 'roc_fig'
-    fig.savefig(p_name + '.png', bbox_inches='tight')
+    fig.savefig(p_name + '.png', bbox_inches='tight', dpi=300)
 
     return threshold['best']
 
@@ -206,7 +213,7 @@ def plot_metric(y_val, x_val, avg, p_name=None, threshold=None):
 
     n_classes = len(avg) - 2
 
-    fig = plt.figure()
+    fig = plt.figure(figsize=(g_ratio_l, g_ratio_a))
     plt.plot(x_val['micro'], y_val['micro'],
              label='micro-average ({0:0.2f})'
                    ''.format(avg['micro']),
@@ -227,9 +234,12 @@ def plot_metric(y_val, x_val, avg, p_name=None, threshold=None):
     mlb = load_mlb()
 
     for i, color in zip(range(n_classes), rgb):
+        _cat = mlb.classes_[i]
+        if _cat == "unclassified":
+            _cat = "miscellaneous"
         plt.plot(x_val[i], y_val[i], color=color, linewidth=1, linestyle='--',
                  label='{0} ({1:0.2f})'
-                       ''.format(mlb.classes_[i], avg[i]), alpha=.8)
+                       ''.format(_cat, avg[i]), alpha=.8)
 
     if threshold is not None:
         plt.plot([0, 1], [threshold, threshold], 'k--', linewidth=1)
@@ -240,12 +250,12 @@ def plot_metric(y_val, x_val, avg, p_name=None, threshold=None):
     # plt.title('ROC for UniProt classes')
     plt.xlabel('Recall')
     plt.ylabel('Precision')
-    plt.title('Precision-Recall Curve for UniProt classes')
-    plt.legend(loc='upper right')
+    # plt.title('Precision-Recall Curve for UniProtKB categories')
+    plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
     # plt.show()
     if p_name is None:
         p_name = 'prec_rec_fig'
-    fig.savefig(p_name + '.png', bbox_inches='tight')
+    fig.savefig(p_name + '.png', bbox_inches='tight', dpi=300)
 
 # from sklearn.datasets import make_multilabel_classification
 # from sklearn.preprocessing import minmax_scale

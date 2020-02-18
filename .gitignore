@@ -128,3 +128,5 @@ results/
 resources/
 nohup.out
 *.pkl
+*.png
+*.hdf5

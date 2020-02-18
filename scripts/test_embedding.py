@@ -1,9 +1,7 @@
-import numpy as np
 import time
-from classifier.dataset import SentenceDataset
+
+import numpy as np
 from gensim.models.doc2vec import Doc2Vec
-from input.regressors import get_label_set
-from input.utils import get_class_map
 from keras.layers import Conv1D, GlobalMaxPooling1D
 from keras.layers import Dense
 from keras.layers import Embedding, Dropout
@@ -12,6 +10,10 @@ from keras.models import Model
 from keras.preprocessing.sequence import pad_sequences
 from numpy import zeros
 from sklearn.metrics import precision_score
+
+from classifier.dataset import SentenceDataset
+from input.regressors import get_label_set
+from input.utils import get_class_map
 
 
 def doc_words(model):

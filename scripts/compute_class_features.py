@@ -2,13 +2,19 @@ from __future__ import print_function
 
 import numpy as np
 import re
-from classifier.dataset import TaggedDataset
+import random
+# import pandas as pd
+
+from sklearn.feature_selection import mutual_info_classif
+from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+
 from input.utils import get_class_map
 from input.utils import load_mlb
-from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
-from sklearn.feature_selection import mutual_info_classif
+from classifier.dataset import TaggedDataset
+from classifier.model import CoreClassifier
 
-# import pandas as pd
+from keras import backend as K
+import tensorflow as tf
 
 stop_tokens = ['_infn_', '_inprot_', '_ingen_', '_inacc_']
 
@@ -25,6 +31,8 @@ UNIPROT_CLASSES = (
     (10, 'Subcellular location'),
     (11, 'Miscellaneous'),
 )
+
+LABEL_MAP = {i[1].lower(): i[1] for i in UNIPROT_CLASSES}
 
 
 def __vectorize_count(X, max_features=5000, tfidf=False, ngram=1, max_df=.95, min_df=10):
@@ -171,28 +179,42 @@ def vectorize(sample, features):
     sample = sample.split()
     for token in sample:
         if token in features:
-            X[features[token]['index']] = features[token]['index']
+            X[features[token]['index']] = features[token]['score']
     return X
 
 
-def annotate_file(samples, pos_features, neg_features, is_positive):
+def annotate_file(upclass, samples, pos_features, neg_features, is_positive, gen_all_features=None,
+                  gen_neg_features=None):
     section, line, y, X = [], [], [], []
+    max_pos, max_neg = 0, 0
     for sample in samples:
         line_section, line_num, line_range, text = sample.split(' ', maxsplit=3)
 
         Xp = vectorize(text, pos_features)
-        Xn = vectorize(text, neg_features)
+        #Xn = vectorize(text, neg_features)
         # if sum(Xp) > 0:# and sum(Xn) > 0:
+        sum_pos = sum(Xp)
+        #sum_neg = sum(Xn)
+        print(upclass, 'sum pos', sum_pos)#, 'sum neg', sum_neg)
+        if max_pos < sum_pos:
+            max_pos = sum_pos
+        # if max_neg < sum_neg:
+        #     max_neg = sum_neg
+        #if is_positive and sum_pos > sum_neg:
+        y.append(upclass)
+        #Xp = vectorize(text, gen_all_features)
+        #Xn = vectorize(text, gen_neg_features)
+        #if sum_pos > 0:
         section.append(line_section)
         line.append(line_num)
-        if is_positive and sum(Xp) > sum(Xn):
-            y.append(1)
-            X.append(Xp + Xn)
-            # elif not is_positive and sum(Xp) < sum(Xn):
-            # else:
-            #    y.append(0)
-            #    X.append(Xp + Xn)
-    return section, line, y, X
+        #X.append(Xp + Xn)
+        X.append(sum_pos)
+        # elif sum(Xp) < sum(Xn) and random.randrange(k) == int(k/2):
+        #     y.append(0)
+        #     Xp = vectorize(text, gen_all_features)
+        #     Xn = vectorize(text, gen_neg_features)
+        #     X.append(Xp + Xn)
+    return section, line, y, np.array(X)/max_pos
 
 
 def get_class_name_map(mlb):
@@ -203,18 +225,22 @@ def get_class_name_map(mlb):
     return cnmap
 
 
+def __load_features(feature_dir, cid, k=200):
+    feat_score = {}
+    with open(feature_dir + '/' + cid + '_terms.csv') as f:
+        count = 0
+        for line in f.readlines()[:k]:
+            feat, score = line.strip().split()
+            feat_score[feat] = {'score': float(score), 'index': count}
+            count += 1
+    return feat_score
+
+
 def get_features(feature_dir, class_names, k=200):
     res = {}
     for c in class_names.keys():
-        res[c] = {}
-        feat_score = {}
         cid = class_names[c]
-        with open(feature_dir + '/' + cid + '_terms.csv') as f:
-            count = 0
-            for line in f.readlines()[:k]:
-                feat, score = line.strip().split()
-                feat_score[feat] = {'score': float(score), 'index': count}
-                count += 1
+        feat_score = __load_features(feature_dir, cid, k=k)
         res[c] = feat_score
     return res
 
@@ -222,71 +248,137 @@ def get_features(feature_dir, class_names, k=200):
 def get_neg_features(features, upclass, feature_dir, k=200):
     # fP = features[upclass]
     cat = 'neg'
-    fN = {}
-    with open(feature_dir + '/' + cat + '_terms.csv') as f:
-        for line in f.readlines()[:k]:
-            feat, score = line.strip().split()
-            fN[feat] = {'score': float(score)}
+    fN = __load_features(feature_dir, cat)
 
     for c in features.keys():
         if c != upclass:
             for feat in features[c].keys():
                 if feat not in fN:
-                    fN[feat] = features[c][feat]['score']
+                    fN[feat] = {'score': features[c][feat]['score']}
                 else:
-                    fN[feat] += features[c][feat]['score']
+                    fN[feat]['score'] += features[c][feat]['score']
     feat_score = {}
     count = 0
-    for token in sorted(fN, key=fN.get, reverse=True)[:k]:
-        if token not in stop_tokens:
-            feat_score[token] = {'score': fN[token], 'index': count}
+    for token_item in sorted(fN.items(), key=lambda kv: kv[1]['score'], reverse=True)[:k]:
+        if token_item[0] not in stop_tokens:
+            feat_score[token_item[0]] = {'score': token_item[1]['score'], 'index': count}
             count += 1
 
     return feat_score
 
 
-def extract_evidence(source_dir, feature_dir, dest_file, cmap, k=200):
+def __get_features(doc):
+    doc_id = doc[0]
+    doc_in, doc_out = [], []
+    for sent in doc[1]:
+        doc_in += [t[:20] for t in sent.split() if len(t) > 2]
+    for sent in doc[2]:
+        doc_out += [t[:20] for t in sent.split() if len(t) > 2]
+    return [doc_id, doc_in, doc_out]
+
+
+def extract_evidence(source_dir, feature_dir, dest_file, cmap=None, k=200, relocate=False, predictor=None):
     mlb = load_mlb()
     cnmap = get_class_name_map(mlb)
 
     features = get_features(feature_dir, cnmap, k=k)
-    neg_features = {i: get_neg_features(features, i, k=k) for i in features.keys()}
+    neg_features = {i: get_neg_features(features, i, feature_dir, k=k) for i in features.keys()}
 
-    # feat_set = set()
-    # for feat_score in features.values():
-    #     for token in feat_score[0]:
-    #         feat_set.add(token)
+    gen_all_features = __load_features(feature_dir, 'all', k=k)
+    gen_neg_features = __load_features(feature_dir, 'neg', k=k)
 
     alldocs = TaggedDataset(source_dir)
     count = 0
     with open(dest_file, mode='w') as f:
         for doc in alldocs.get_content(merged=False):
             doc_id = doc[0]
-            doc_classes = np.array([cmap[doc_id]])
-            class_labels = mlb.inverse_transform(doc_classes)[0]
+            if relocate:
+                _doc_feat = __get_features(doc)
+                class_labels = [_c.lower() for _c in __predict(_doc_feat, predictor)]
+            else:
+                doc_classes = np.array([cmap[doc_id]])
+                class_labels = mlb.inverse_transform(doc_classes)[0]
             for c in class_labels:
-                sectionp, linep, yp, Xp = annotate_file(doc[1], features[c], neg_features[c], True)
-                sectionn, linen, yn, Xn = annotate_file(doc[2], features[c], neg_features[c], True)
-                # [print(doc_id, cnmap[c], sectionp[i], linep[i], 1, yp[i], *Xp[i], file=f) for i in range(len(yp))]
-                [print(doc_id, cnmap[c], sectionp[i], linep[i], 1, yp[i], file=f) for i in range(len(yp))]
-                # [print(doc_id, cnmap[c], sectionn[i], linen[i], 1, yn[i], *Xn[i], file=f) for i in range(len(yn))]
-                [print(doc_id, cnmap[c], sectionn[i], linen[i], 0, yn[i], file=f) for i in range(len(yn))]
+                sectionp, linep, yp, Xp = annotate_file(c, doc[1], features[c], neg_features[c], True, gen_all_features,
+                                                        gen_neg_features)
+                sectionn, linen, yn, Xn = annotate_file(c, doc[2], features[c], neg_features[c], True, gen_all_features,
+                                                        gen_neg_features)
+                [print(doc_id, cnmap[c], sectionp[i], linep[i], 1, yp[i], Xp[i], file=f) for i in range(len(yp))]
+                #[print(doc_id, cnmap[c], sectionp[i], linep[i], 1, yp[i], file=f) for i in range(len(yp))]
+                [print(doc_id, cnmap[c], sectionn[i], linen[i], 0, yn[i], Xn[i], file=f) for i in range(len(yn))]
+                #[print(doc_id, cnmap[c], sectionn[i], linen[i], 0, yn[i], file=f) for i in range(len(yn))]
             count += 1
             if count % 100 == 0:
                 print(str(count) + ' files processed')
     f.close()
 
 
+def __get_predictor():
+    # /data/user/teodoro/uniprot/results/no_large/tag/cnn_0.001.pkl
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+    K.set_session(tf.Session(config=config))
+
+    classifier = 'cnn'
+    c = '0.001'
+    full_class_file = '/data/user/teodoro/uniprot/results/no_large/tag/' + classifier + '_' + c + '.pkl'
+    # full_class_file = os.path.join(settings.BASE_DIR, rel_class_file)
+    _LCL = CoreClassifier(classifier)
+    LCL = _LCL.load(full_class_file)
+    return LCL
+
+
+GRAPH = tf.get_default_graph()
+
+
+def __predict(features, predictor):
+    labels = []
+    try:
+        LCL = predictor
+        # features = [(doc_id, query_item.features_in, query_item.features_out)]
+
+        print('prediction features', len(features))
+        print('first items', features[:5])
+
+        with GRAPH.as_default():
+            LCL.predict_proba([features], [[0]])
+
+        print('prediction probabilities', LCL.predictions[0])
+        print('applying classifier threshold', LCL.best_params['threshold'])
+
+        for i in range(len(LCL.best_params['threshold'])):
+            LCL.predictions[LCL.predictions[:, i] >= LCL.best_params['threshold'][i], i] = 1
+            LCL.predictions[LCL.predictions[:, i] < LCL.best_params['threshold'][i], i] = 0
+
+        labels = ''
+        print('converting labels', LCL.predictions)
+
+        if max(LCL.predictions[0]) != 0:
+            labels = LCL.inv_binarize(LCL.predictions)
+            labels = sorted([LABEL_MAP[r] for r in labels[0] if r in LABEL_MAP])
+
+        print('binary predictions', LCL.predictions)
+        print('prediction labels', labels)
+
+    except Exception as e:
+        print('cannot classify', features)
+        print('exception', str(e))
+    return labels
+
+
 if __name__ == '__main__':
     # create_corpus = True
     create_corpus = False
-    info_tokens = True
-    evidence = False
+    info_tokens = False
+    evidence = True
+    relocate = False
     ngram = 1
-    source_dir = '/data/user/teodoro/uniprot/dataset/no_large/train/tag/'
+    # source_dir = '/data/user/teodoro/uniprot/dataset/no_large/train/tag/'
     # source_dir = '/data/user/teodoro/uniprot/dataset/no_large/test/tag'
+    source_dir = '/data/user/teodoro/uniprot/dataset/no_large/test_evid/test/tag'
     feat_dir = '/data/user/teodoro/uniprot/dataset/no_large/features/'
     evi_file = '/data/user/teodoro/uniprot/dataset/no_large/evidence/data.txt'
+    rel_file = '/data/user/teodoro/uniprot/dataset/no_large/evidence/results.txt'
 
     max_features = 10000
     k = 500
@@ -305,4 +397,9 @@ if __name__ == '__main__':
     k = 200
     if evidence:
         print('extracting evidence')
-        extract_evidence(source_dir, feat_dir, evi_file, cmap, k=k)
+        extract_evidence(source_dir, feat_dir, evi_file, cmap=cmap, k=k)
+
+    if relocate:
+        print('relocating evidence')
+        predictor = __get_predictor()
+        extract_evidence(source_dir, feat_dir, rel_file, k=k, relocate=True, predictor=predictor)

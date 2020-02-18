@@ -7,9 +7,8 @@ from urllib.request import urlopen
 
 from lxml import etree
 
-timeout = 120
+timeout=120
 socket.setdefaulttimeout(timeout)
-
 
 def get_mapping(source):
     category_map = {}
